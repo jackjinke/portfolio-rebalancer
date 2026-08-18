@@ -24,17 +24,17 @@ assets:
     kind: etf
     target_weight: 0.50
     trigger:
-      type: relative_deviation
+      type: relative
       threshold: 0.20
   - symbol: "600519"
     kind: stock
     target_weight: 0.30
     trigger:
-      type: absolute_deviation
+      type: absolute
       threshold: 0.05
 ```
 
-每个品种必须单独配置 `trigger`。`relative_deviation` 按 `|实际比例 - 目标比例| / 目标比例` 判断；`absolute_deviation` 按 `|实际比例 - 目标比例|` 判断，因此阈值 `0.05` 表示相差 5 个百分点。任一品种超过自身阈值即触发整个组合再平衡，触发后阈值不再作为调仓终点。目标比例之和不足 100% 的部分视为现金。
+每个品种必须单独配置 `trigger`。`relative` 按 `|实际比例 - 目标比例| / 目标比例` 判断；`absolute` 按 `|实际比例 - 目标比例|` 判断，因此阈值 `0.05` 表示相差 5 个百分点。任一品种超过自身阈值即触发整个组合再平衡，触发后阈值不再作为调仓终点。目标比例之和不足 100% 的部分视为现金。
 
 当前持仓 `holdings.yaml`：
 

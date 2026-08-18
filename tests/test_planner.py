@@ -37,7 +37,7 @@ def config(
                 instrument=instrument,
                 weight=Decimal(weight),
                 trigger=Trigger(
-                    type=TriggerType.RELATIVE_DEVIATION,
+                    type=TriggerType.RELATIVE,
                     threshold=Decimal(threshold),
                 ),
             )
@@ -86,7 +86,7 @@ def test_each_asset_uses_its_own_trigger() -> None:
                     instrument=absolute_inside,
                     weight=Decimal("0.2"),
                     trigger=Trigger(
-                        type=TriggerType.ABSOLUTE_DEVIATION,
+                        type=TriggerType.ABSOLUTE,
                         threshold=Decimal("0.05"),
                     ),
                 ),
@@ -94,7 +94,7 @@ def test_each_asset_uses_its_own_trigger() -> None:
                     instrument=relative_outside,
                     weight=Decimal("0.2"),
                     trigger=Trigger(
-                        type=TriggerType.RELATIVE_DEVIATION,
+                        type=TriggerType.RELATIVE,
                         threshold=Decimal("0.15"),
                     ),
                 ),
@@ -102,7 +102,7 @@ def test_each_asset_uses_its_own_trigger() -> None:
                     instrument=absolute_outside,
                     weight=Decimal("0.6"),
                     trigger=Trigger(
-                        type=TriggerType.ABSOLUTE_DEVIATION,
+                        type=TriggerType.ABSOLUTE,
                         threshold=Decimal("0.05"),
                     ),
                 ),

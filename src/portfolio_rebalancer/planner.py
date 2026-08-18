@@ -381,7 +381,7 @@ def plan(
 
         actual_weight = Decimal(value_units) / Decimal(initial_total_units)
         absolute_deviation = abs(actual_weight - asset.weight)
-        if asset.trigger.type == TriggerType.RELATIVE_DEVIATION:
+        if asset.trigger.type == TriggerType.RELATIVE:
             trigger_deviation = absolute_deviation / asset.weight
         else:
             trigger_deviation = absolute_deviation

@@ -94,8 +94,8 @@ def load_portfolio(path: str | Path) -> PortfolioConfig:
             trigger_type = TriggerType(trigger_data.get("type"))
         except (TypeError, ValueError) as error:
             raise ConfigError(
-                f"{trigger_context}.type must be 'relative_deviation' or "
-                "'absolute_deviation'"
+                f"{trigger_context}.type must be 'relative' or "
+                "'absolute'"
             ) from error
         threshold = _decimal(
             trigger_data.get("threshold"), f"{trigger_context}.threshold"

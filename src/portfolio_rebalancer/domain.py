@@ -22,8 +22,8 @@ class Instrument:
 
 
 class TriggerType(StrEnum):
-    RELATIVE_DEVIATION = "relative_deviation"
-    ABSOLUTE_DEVIATION = "absolute_deviation"
+    RELATIVE = "relative"
+    ABSOLUTE = "absolute"
 
 
 @dataclass(frozen=True)

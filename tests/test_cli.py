@@ -16,7 +16,7 @@ assets:
     kind: etf
     target_weight: 0.50
     trigger:
-      type: absolute_deviation
+      type: absolute
       threshold: 0.05
 """.strip(),
         encoding="utf-8",
