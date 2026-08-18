@@ -12,8 +12,9 @@ from portfolio_rebalancer.domain import (
     InstrumentKind,
     PortfolioConfig,
     Position,
-    Strategy,
     TargetAllocation,
+    Trigger,
+    TriggerType,
 )
 
 
@@ -70,14 +71,6 @@ def _load_yaml(path: str | Path) -> dict[str, Any]:
 
 def load_portfolio(path: str | Path) -> PortfolioConfig:
     data = _load_yaml(path)
-    strategy_data = _mapping(data.get("strategy"), "strategy")
-    strategy_type = strategy_data.get("type")
-    if strategy_type != "relative_deviation":
-        raise ConfigError("strategy.type must be 'relative_deviation'")
-    threshold = _decimal(strategy_data.get("threshold"), "strategy.threshold")
-    if not Decimal(0) < threshold < Decimal(1):
-        raise ConfigError("strategy.threshold must be between 0 and 1")
-
     allow_funds = data.get("allow_additional_funds")
     if not isinstance(allow_funds, bool):
         raise ConfigError("allow_additional_funds must be true or false")
@@ -94,7 +87,30 @@ def load_portfolio(path: str | Path) -> PortfolioConfig:
         weight = _decimal(item.get("target_weight"), f"{context}.target_weight")
         if not Decimal(0) < weight <= Decimal(1):
             raise ConfigError(f"{context}.target_weight must be between 0 and 1")
-        assets.append(TargetAllocation(instrument=instrument, weight=weight))
+
+        trigger_context = f"{context}.trigger"
+        trigger_data = _mapping(item.get("trigger"), trigger_context)
+        try:
+            trigger_type = TriggerType(trigger_data.get("type"))
+        except (TypeError, ValueError) as error:
+            raise ConfigError(
+                f"{trigger_context}.type must be 'relative_deviation' or "
+                "'absolute_deviation'"
+            ) from error
+        threshold = _decimal(
+            trigger_data.get("threshold"), f"{trigger_context}.threshold"
+        )
+        if not Decimal(0) < threshold < Decimal(1):
+            raise ConfigError(
+                f"{trigger_context}.threshold must be between 0 and 1"
+            )
+        assets.append(
+            TargetAllocation(
+                instrument=instrument,
+                weight=weight,
+                trigger=Trigger(type=trigger_type, threshold=threshold),
+            )
+        )
 
     if not assets:
         raise ConfigError("assets must contain at least one target")
@@ -103,7 +119,6 @@ def load_portfolio(path: str | Path) -> PortfolioConfig:
         raise ConfigError("target weights must not sum to more than 1")
 
     return PortfolioConfig(
-        strategy=Strategy(type=strategy_type, threshold=threshold),
         allow_additional_funds=allow_funds,
         assets=tuple(assets),
     )

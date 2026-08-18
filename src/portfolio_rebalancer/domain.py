@@ -21,21 +21,26 @@ class Instrument:
         return f"{self.kind.value}:{self.symbol}"
 
 
-@dataclass(frozen=True)
-class TargetAllocation:
-    instrument: Instrument
-    weight: Decimal
+class TriggerType(StrEnum):
+    RELATIVE_DEVIATION = "relative_deviation"
+    ABSOLUTE_DEVIATION = "absolute_deviation"
 
 
 @dataclass(frozen=True)
-class Strategy:
-    type: str
+class Trigger:
+    type: TriggerType
     threshold: Decimal
 
 
 @dataclass(frozen=True)
+class TargetAllocation:
+    instrument: Instrument
+    weight: Decimal
+    trigger: Trigger
+
+
+@dataclass(frozen=True)
 class PortfolioConfig:
-    strategy: Strategy
     allow_additional_funds: bool
     assets: tuple[TargetAllocation, ...]
 

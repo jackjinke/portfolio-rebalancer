@@ -10,14 +10,14 @@ def test_script_writes_scheduled_result(tmp_path, monkeypatch) -> None:
     portfolio = tmp_path / "portfolio.yaml"
     portfolio.write_text(
         """
-strategy:
-  type: relative_deviation
-  threshold: 0.10
 allow_additional_funds: true
 assets:
   - symbol: "510300"
     kind: etf
     target_weight: 0.50
+    trigger:
+      type: absolute_deviation
+      threshold: 0.05
 """.strip(),
         encoding="utf-8",
     )

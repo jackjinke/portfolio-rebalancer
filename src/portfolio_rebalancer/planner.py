@@ -25,6 +25,7 @@ from portfolio_rebalancer.domain import (
     RebalancePlan,
     Trade,
     TradeSide,
+    TriggerType,
 )
 
 LOT_SIZE = 100
@@ -334,6 +335,7 @@ def plan(
     quotes: Mapping[Instrument, Quote],
 ) -> RebalancePlan:
     _validate_instruments(config, holdings)
+    target_allocations = {asset.instrument: asset for asset in config.assets}
     target_weights = {asset.instrument: asset.weight for asset in config.assets}
     held_quantities = {
         position.instrument: position.quantity for position in holdings.positions
@@ -368,19 +370,23 @@ def plan(
         raise PlannerError("portfolio total must be positive")
 
     cash_target = config.cash_weight
-    threshold = config.strategy.threshold
     triggered_by: list[str] = []
     for instrument in instruments:
-        target = target_weights.get(instrument, Decimal(0))
+        asset = target_allocations.get(instrument)
         value_units = current_lots[instrument] * lot_values[instrument]
-        deviation = _deviation(value_units, initial_total_units, target)
-        if (deviation is None and value_units > 0) or (
-            deviation is not None and deviation > threshold
-        ):
+        if asset is None:
+            if value_units > 0:
+                triggered_by.append(instrument.key)
+            continue
+
+        actual_weight = Decimal(value_units) / Decimal(initial_total_units)
+        absolute_deviation = abs(actual_weight - asset.weight)
+        if asset.trigger.type == TriggerType.RELATIVE_DEVIATION:
+            trigger_deviation = absolute_deviation / asset.weight
+        else:
+            trigger_deviation = absolute_deviation
+        if trigger_deviation > asset.trigger.threshold:
             triggered_by.append(instrument.key)
-    cash_deviation = _deviation(initial_cash_units, initial_total_units, cash_target)
-    if cash_deviation is not None and cash_deviation > threshold:
-        triggered_by.append("cash")
 
     as_of = max(quote.as_of for quote in quotes.values())
     before = _allocations(

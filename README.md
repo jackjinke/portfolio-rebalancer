@@ -1,6 +1,6 @@
 # Portfolio Rebalancer
 
-一个面向国内 A 股和 ETF 的资产再平衡计划脚本。脚本通过 AKShare 获取最新行情，根据目标比例和相对偏差阈值判断是否需要调仓，并在 100 股/份整数交易约束下让整个组合尽可能贴近目标配置。
+一个面向国内 A 股和 ETF 的资产再平衡计划脚本。脚本通过 AKShare 获取最新行情，根据每个品种独立配置的偏差触发条件判断是否需要调仓，并在 100 股/份整数交易约束下让整个组合尽可能贴近目标配置。
 
 脚本只计算计划，不会自动下单。
 
@@ -17,22 +17,24 @@ uv sync
 组合配置 `portfolio.yaml`：
 
 ```yaml
-strategy:
-  type: relative_deviation
-  threshold: 0.10
-
 allow_additional_funds: true
 
 assets:
   - symbol: "510300"
     kind: etf
     target_weight: 0.50
+    trigger:
+      type: relative_deviation
+      threshold: 0.20
   - symbol: "600519"
     kind: stock
     target_weight: 0.30
+    trigger:
+      type: absolute_deviation
+      threshold: 0.05
 ```
 
-目标比例之和不足 100% 的部分视为现金。`threshold: 0.10` 表示相对目标比例偏差超过 10% 时触发再平衡；触发后，阈值不再作为调仓终点。
+每个品种必须单独配置 `trigger`。`relative_deviation` 按 `|实际比例 - 目标比例| / 目标比例` 判断；`absolute_deviation` 按 `|实际比例 - 目标比例|` 判断，因此阈值 `0.05` 表示相差 5 个百分点。任一品种超过自身阈值即触发整个组合再平衡，触发后阈值不再作为调仓终点。目标比例之和不足 100% 的部分视为现金。
 
 当前持仓 `holdings.yaml`：
 

@@ -10,9 +10,10 @@ from portfolio_rebalancer.domain import (
     PortfolioConfig,
     Position,
     Quote,
-    Strategy,
     TargetAllocation,
     TradeSide,
+    Trigger,
+    TriggerType,
 )
 from portfolio_rebalancer.planner import PlannerError, plan
 
@@ -30,12 +31,16 @@ def config(
     allow_funds: bool = False,
 ) -> PortfolioConfig:
     return PortfolioConfig(
-        strategy=Strategy(
-            type="relative_deviation", threshold=Decimal(threshold)
-        ),
         allow_additional_funds=allow_funds,
         assets=tuple(
-            TargetAllocation(instrument=instrument, weight=Decimal(weight))
+            TargetAllocation(
+                instrument=instrument,
+                weight=Decimal(weight),
+                trigger=Trigger(
+                    type=TriggerType.RELATIVE_DEVIATION,
+                    threshold=Decimal(threshold),
+                ),
+            )
             for instrument, weight in targets
         ),
     )
@@ -68,6 +73,60 @@ def test_returns_no_trades_when_portfolio_is_inside_band() -> None:
     assert result.status == "no_rebalance"
     assert result.trade_count == 0
     assert result.additional_funds == 0
+
+def test_each_asset_uses_its_own_trigger() -> None:
+    absolute_inside = stock("600001")
+    relative_outside = stock("600002")
+    absolute_outside = stock("600003")
+    result = plan(
+        PortfolioConfig(
+            allow_additional_funds=False,
+            assets=(
+                TargetAllocation(
+                    instrument=absolute_inside,
+                    weight=Decimal("0.2"),
+                    trigger=Trigger(
+                        type=TriggerType.ABSOLUTE_DEVIATION,
+                        threshold=Decimal("0.05"),
+                    ),
+                ),
+                TargetAllocation(
+                    instrument=relative_outside,
+                    weight=Decimal("0.2"),
+                    trigger=Trigger(
+                        type=TriggerType.RELATIVE_DEVIATION,
+                        threshold=Decimal("0.15"),
+                    ),
+                ),
+                TargetAllocation(
+                    instrument=absolute_outside,
+                    weight=Decimal("0.6"),
+                    trigger=Trigger(
+                        type=TriggerType.ABSOLUTE_DEVIATION,
+                        threshold=Decimal("0.05"),
+                    ),
+                ),
+            ),
+        ),
+        Holdings(
+            cash=Decimal(0),
+            positions=(
+                Position(absolute_inside, 1600),
+                Position(relative_outside, 1600),
+                Position(absolute_outside, 6800),
+            ),
+        ),
+        quote_map(
+            (absolute_inside, "1"),
+            (relative_outside, "1"),
+            (absolute_outside, "1"),
+        ),
+    )
+
+    assert result.triggered_by == (
+        relative_outside.key,
+        absolute_outside.key,
+    )
 
 
 def test_additional_funds_can_rebalance_without_a_security_trade() -> None:
