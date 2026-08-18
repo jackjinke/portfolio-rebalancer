@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "portfolio-rebalancer"
+version = "0.1.0"
+description = "Scheduled A-share and ETF portfolio rebalancing planner"
+requires-python = ">=3.13"
+dependencies = [
+  "akshare>=1.18.0",
+  "PuLP>=3.2.0,<4",
+  "PyYAML>=6.0.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3"]
+
+[project.scripts]
+portfolio-rebalancer = "portfolio_rebalancer.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/portfolio_rebalancer"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
