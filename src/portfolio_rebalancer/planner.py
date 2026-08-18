@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, Decimal
 
 from pulp import (
     PULP_CBC_CMD,
@@ -29,6 +29,8 @@ from portfolio_rebalancer.domain import (
 
 LOT_SIZE = 100
 MONEY_SCALE = 10_000
+SOLVER_ABSOLUTE_TOLERANCE = 1e-5
+SOLVER_RELATIVE_TOLERANCE = 1e-7
 
 
 class PlannerError(ValueError):
@@ -146,149 +148,6 @@ def _max_deviation(
     return max(deviations, default=Decimal(0))
 
 
-def _solve_subset(
-    instruments: tuple[Instrument, ...],
-    adjustable: frozenset[Instrument],
-    current_lots: Mapping[Instrument, int],
-    target_weights: Mapping[Instrument, Decimal],
-    lot_values: Mapping[Instrument, int],
-    initial_cash_units: int,
-    initial_total_units: int,
-    cash_target: Decimal,
-    threshold: Decimal,
-    allow_funds: bool,
-) -> _Candidate | None:
-    for instrument in instruments:
-        if (
-            target_weights.get(instrument, Decimal(0)) == 0
-            and current_lots[instrument] > 0
-            and instrument not in adjustable
-        ):
-            return None
-
-    problem = LpProblem("portfolio_rebalance", LpMinimize)
-    funding = (
-        LpVariable("additional_funds", lowBound=0, cat=LpInteger)
-        if allow_funds
-        else None
-    )
-    funding_expression = funding if funding is not None else 0
-
-    final_lots: dict[Instrument, int | LpVariable] = {}
-    for index, instrument in enumerate(instruments):
-        target = target_weights.get(instrument, Decimal(0))
-        if target == 0:
-            final_lots[instrument] = 0
-        elif instrument in adjustable:
-            final_lots[instrument] = LpVariable(
-                f"lots_{index}", lowBound=0, cat=LpInteger
-            )
-        else:
-            final_lots[instrument] = current_lots[instrument]
-
-    final_cash = initial_cash_units + funding_expression - lpSum(
-        (final_lots[instrument] - current_lots[instrument]) * lot_values[instrument]
-        for instrument in instruments
-    )
-    final_total = lpSum([initial_total_units, funding_expression])
-    problem += final_cash >= 0
-
-    lower_factor = Decimal(1) - threshold
-    upper_factor = Decimal(1) + threshold
-    for instrument in instruments:
-        target = target_weights.get(instrument, Decimal(0))
-        final_value = lpSum([final_lots[instrument] * lot_values[instrument]])
-        if target == 0:
-            continue
-        problem += final_value >= float(target * lower_factor) * final_total
-        problem += final_value <= float(target * upper_factor) * final_total
-
-    if cash_target > 0:
-        problem += final_cash >= float(cash_target * lower_factor) * final_total
-        problem += final_cash <= float(cash_target * upper_factor) * final_total
-
-    solver = PULP_CBC_CMD(msg=False)
-    if funding is not None:
-        problem.setObjective(funding)
-        if problem.solve(solver) != LpStatusOptimal:
-            return None
-        funding_units = round(value(funding))
-        problem += funding == funding_units
-    else:
-        funding_units = 0
-    constant_total = initial_total_units + funding_units
-
-    max_deviation = LpVariable("max_relative_deviation", lowBound=0)
-    for instrument in instruments:
-        target = target_weights.get(instrument, Decimal(0))
-        if target == 0:
-            continue
-        target_value = float(target) * constant_total
-        difference = final_lots[instrument] * lot_values[instrument] - target_value
-        scale = float(target) * constant_total
-        problem += difference <= max_deviation * scale
-        problem += -difference <= max_deviation * scale
-    if cash_target > 0:
-        cash_difference = final_cash - float(cash_target) * constant_total
-        cash_scale = float(cash_target) * constant_total
-        problem += cash_difference <= max_deviation * cash_scale
-        problem += -cash_difference <= max_deviation * cash_scale
-
-    problem.setObjective(max_deviation)
-    if problem.solve(solver) != LpStatusOptimal:
-        return None
-    best_max_deviation = float(value(max_deviation))
-    problem += max_deviation <= best_max_deviation + 1e-8
-
-    turnover_terms = []
-    for index, instrument in enumerate(instruments):
-        target = target_weights.get(instrument, Decimal(0))
-        if target == 0:
-            turnover_terms.append(current_lots[instrument] * lot_values[instrument])
-        elif instrument in adjustable:
-            changed_lots = LpVariable(f"changed_lots_{index}", lowBound=0)
-            difference = final_lots[instrument] - current_lots[instrument]
-            problem += changed_lots >= difference
-            problem += changed_lots >= -difference
-            turnover_terms.append(changed_lots * lot_values[instrument])
-
-    problem.setObjective(lpSum(turnover_terms))
-    if problem.solve(solver) != LpStatusOptimal:
-        return None
-
-    result_lots: dict[Instrument, int] = {}
-    for instrument in instruments:
-        expression = final_lots[instrument]
-        result_lots[instrument] = (
-            expression if isinstance(expression, int) else round(value(expression))
-        )
-
-    final_cash_units = initial_cash_units + funding_units - sum(
-        (result_lots[instrument] - current_lots[instrument]) * lot_values[instrument]
-        for instrument in instruments
-    )
-    if final_cash_units < 0:
-        return None
-    turnover_units = sum(
-        abs(result_lots[instrument] - current_lots[instrument])
-        * lot_values[instrument]
-        for instrument in instruments
-    )
-    return _Candidate(
-        funding_units=funding_units,
-        final_lots=result_lots,
-        final_cash_units=final_cash_units,
-        max_deviation=_max_deviation(
-            instruments,
-            result_lots,
-            final_cash_units,
-            constant_total,
-            target_weights,
-            lot_values,
-            cash_target,
-        ),
-        turnover_units=turnover_units,
-    )
 
 
 def _solve_optimal(
@@ -299,24 +158,30 @@ def _solve_optimal(
     initial_cash_units: int,
     initial_total_units: int,
     cash_target: Decimal,
-    threshold: Decimal,
     allow_funds: bool,
-    total_upper_bound: int,
 ) -> _Candidate | None:
     problem = LpProblem("portfolio_rebalance_optimal", LpMinimize)
+    max_funding = (
+        sum(
+            lot_values[instrument]
+            for instrument in instruments
+            if target_weights.get(instrument, Decimal(0)) > 0
+        )
+        if allow_funds
+        else 0
+    )
     funding = (
         LpVariable(
             "optimal_additional_funds",
             lowBound=0,
-            upBound=total_upper_bound - initial_total_units,
+            upBound=max_funding,
             cat=LpInteger,
         )
         if allow_funds
         else None
     )
     funding_expression = funding if funding is not None else 0
-    lower_factor = Decimal(1) - threshold
-    upper_factor = Decimal(1) + threshold
+    maximum_total = initial_total_units + max_funding
 
     final_lots: dict[Instrument, int | LpVariable] = {}
     trade_indicators = []
@@ -329,12 +194,12 @@ def _solve_optimal(
                 trade_indicators.append(1)
             continue
 
-        max_lots = int(
+        target_lots = int(
             (
-                Decimal(total_upper_bound) * target * upper_factor
-                / Decimal(lot_values[instrument])
-            ).to_integral_value(rounding=ROUND_FLOOR)
+                Decimal(maximum_total) * target / Decimal(lot_values[instrument])
+            ).to_integral_value(rounding=ROUND_CEILING)
         )
+        max_lots = max(current, target_lots + 1)
         lots = LpVariable(
             f"optimal_lots_{index}",
             lowBound=0,
@@ -353,18 +218,49 @@ def _solve_optimal(
     )
     final_total = lpSum([initial_total_units, funding_expression])
     problem += final_cash >= 0
-    for instrument in instruments:
+
+    max_deviation = LpVariable("optimal_max_target_deviation", lowBound=0)
+    deviation_terms = []
+    for index, instrument in enumerate(instruments):
         target = target_weights.get(instrument, Decimal(0))
         if target == 0:
             continue
-        final_value = lpSum([final_lots[instrument] * lot_values[instrument]])
-        problem += final_value >= float(target * lower_factor) * final_total
-        problem += final_value <= float(target * upper_factor) * final_total
+        final_value = final_lots[instrument] * lot_values[instrument]
+        difference = final_value - float(target) * final_total
+        scaled_deviation = LpVariable(f"target_deviation_{index}", lowBound=0)
+        problem += difference <= scaled_deviation * float(target)
+        problem += -difference <= scaled_deviation * float(target)
+        problem += scaled_deviation <= max_deviation
+        deviation_terms.append(scaled_deviation)
+
     if cash_target > 0:
-        problem += final_cash >= float(cash_target * lower_factor) * final_total
-        problem += final_cash <= float(cash_target * upper_factor) * final_total
+        cash_difference = final_cash - float(cash_target) * final_total
+        cash_deviation = LpVariable("cash_target_deviation", lowBound=0)
+        problem += cash_difference <= cash_deviation * float(cash_target)
+        problem += -cash_difference <= cash_deviation * float(cash_target)
+        problem += cash_deviation <= max_deviation
+        deviation_terms.append(cash_deviation)
 
     solver = PULP_CBC_CMD(msg=False)
+    problem.setObjective(max_deviation)
+    if problem.solve(solver) != LpStatusOptimal:
+        return None
+    best_max_deviation = float(value(max_deviation))
+    problem += max_deviation <= best_max_deviation + max(
+        SOLVER_ABSOLUTE_TOLERANCE,
+        abs(best_max_deviation) * SOLVER_RELATIVE_TOLERANCE,
+    )
+
+    total_deviation = lpSum(deviation_terms)
+    problem.setObjective(total_deviation)
+    if problem.solve(solver) != LpStatusOptimal:
+        return None
+    best_total_deviation = float(value(total_deviation))
+    problem += total_deviation <= best_total_deviation + max(
+        SOLVER_ABSOLUTE_TOLERANCE,
+        abs(best_total_deviation) * SOLVER_RELATIVE_TOLERANCE,
+    )
+
     trade_count = lpSum(trade_indicators)
     problem.setObjective(trade_count)
     if problem.solve(solver) != LpStatusOptimal:
@@ -381,28 +277,6 @@ def _solve_optimal(
     else:
         funding_units = 0
     constant_total = initial_total_units + funding_units
-
-    max_deviation = LpVariable("optimal_max_relative_deviation", lowBound=0)
-    for instrument in instruments:
-        target = target_weights.get(instrument, Decimal(0))
-        if target == 0:
-            continue
-        target_value = float(target) * constant_total
-        difference = final_lots[instrument] * lot_values[instrument] - target_value
-        scale = float(target) * constant_total
-        problem += difference <= max_deviation * scale
-        problem += -difference <= max_deviation * scale
-    if cash_target > 0:
-        cash_difference = final_cash - float(cash_target) * constant_total
-        cash_scale = float(cash_target) * constant_total
-        problem += cash_difference <= max_deviation * cash_scale
-        problem += -cash_difference <= max_deviation * cash_scale
-
-    problem.setObjective(max_deviation)
-    if problem.solve(solver) != LpStatusOptimal:
-        return None
-    best_max_deviation = float(value(max_deviation))
-    problem += max_deviation <= best_max_deviation + 1e-8
 
     turnover_terms = []
     for index, instrument in enumerate(instruments):
@@ -534,37 +408,6 @@ def plan(
             after=before,
         )
 
-    feasible = _solve_subset(
-        instruments=instruments,
-        adjustable=frozenset(instruments),
-        current_lots=current_lots,
-        target_weights=target_weights,
-        lot_values=lot_values,
-        initial_cash_units=initial_cash_units,
-        initial_total_units=initial_total_units,
-        cash_target=cash_target,
-        threshold=threshold,
-        allow_funds=config.allow_additional_funds,
-    )
-    if feasible is None:
-        raise PlannerError(
-            "no feasible plan satisfies the deviation threshold and lot-size constraints"
-        )
-
-    total_upper_bound = initial_total_units + feasible.funding_units
-    if config.allow_additional_funds:
-        lower_factor = Decimal(1) - threshold
-        for instrument in instruments:
-            target = target_weights.get(instrument, Decimal(0))
-            current_value = current_lots[instrument] * lot_values[instrument]
-            if target > 0 and current_value > 0:
-                unchanged_bound = int(
-                    (
-                        Decimal(current_value) / (target * lower_factor)
-                    ).to_integral_value(rounding=ROUND_CEILING)
-                )
-                total_upper_bound = max(total_upper_bound, unchanged_bound)
-
     chosen = _solve_optimal(
         instruments=instruments,
         current_lots=current_lots,
@@ -573,13 +416,11 @@ def plan(
         initial_cash_units=initial_cash_units,
         initial_total_units=initial_total_units,
         cash_target=cash_target,
-        threshold=threshold,
         allow_funds=config.allow_additional_funds,
-        total_upper_bound=total_upper_bound,
     )
     if chosen is None:
         raise PlannerError(
-            "no feasible plan satisfies the deviation threshold and lot-size constraints"
+            "no feasible target allocation satisfies the lot-size constraints"
         )
 
     trades: list[Trade] = []

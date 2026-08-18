@@ -26,6 +26,29 @@ def _load_frame(kind: InstrumentKind):
         raise MarketDataError(f"failed to fetch {kind.value} quotes: {error}") from error
 
 
+def _load_etf_fallback_frame():
+    try:
+        import akshare as ak
+
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            return ak.fund_etf_category_sina(symbol="ETF基金")
+    except Exception as error:
+        raise MarketDataError(f"failed to fetch ETF fallback quotes: {error}") from error
+
+
+def _normalize_frame(frame, context: str, *, prefixed_codes: bool = False):
+    if "代码" not in frame.columns or "最新价" not in frame.columns:
+        raise MarketDataError(f"unexpected AKShare {context} quote columns")
+    normalized = frame.copy()
+    codes = normalized["代码"].astype(str).str.strip()
+    normalized["代码"] = (
+        codes.str.extract(r"(\d{6})$", expand=False)
+        if prefixed_codes
+        else codes.str.zfill(6)
+    )
+    return normalized.drop_duplicates(subset="代码", keep="first").set_index("代码")
+
+
 def fetch_quotes(instruments: Iterable[Instrument]) -> dict[Instrument, Quote]:
     requested = tuple(sorted(set(instruments), key=lambda item: item.key))
     by_kind = {
@@ -39,23 +62,32 @@ def fetch_quotes(instruments: Iterable[Instrument]) -> dict[Instrument, Quote]:
         if not kind_instruments:
             continue
         frame = _load_frame(kind)
-        if "代码" not in frame.columns or "最新价" not in frame.columns:
-            raise MarketDataError(f"unexpected AKShare {kind.value} quote columns")
-        normalized = frame.copy()
-        normalized["代码"] = normalized["代码"].astype(str).str.strip().str.zfill(6)
-        normalized = normalized.drop_duplicates(subset="代码", keep="first").set_index("代码")
+        normalized = _normalize_frame(frame, kind.value)
+        fallback = None
+        if kind == InstrumentKind.ETF and any(
+            instrument.symbol not in normalized.index
+            for instrument in kind_instruments
+        ):
+            fallback = _normalize_frame(
+                _load_etf_fallback_frame(),
+                "ETF fallback",
+                prefixed_codes=True,
+            )
 
         for instrument in kind_instruments:
-            if instrument.symbol not in normalized.index:
+            source = normalized
+            if instrument.symbol not in source.index and fallback is not None:
+                source = fallback
+            if instrument.symbol not in source.index:
                 raise MarketDataError(f"quote not found: {instrument.key}")
-            row = normalized.loc[instrument.symbol]
+            row = source.loc[instrument.symbol]
             try:
                 price = Decimal(str(row["最新价"]))
             except (InvalidOperation, ValueError) as error:
                 raise MarketDataError(f"invalid quote price: {instrument.key}") from error
             if not price.is_finite() or price <= 0:
                 raise MarketDataError(f"invalid quote price: {instrument.key}")
-            name_value = row["名称"] if "名称" in normalized.columns else instrument.symbol
+            name_value = row["名称"] if "名称" in source.columns else instrument.symbol
             quotes[instrument] = Quote(
                 instrument=instrument,
                 price=price,

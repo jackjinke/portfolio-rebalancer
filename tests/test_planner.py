@@ -80,13 +80,9 @@ def test_additional_funds_can_rebalance_without_a_security_trade() -> None:
 
     assert result.status == "rebalance_required"
     assert result.trade_count == 0
-    assert result.additional_funds == Decimal("818.1819")
-    asset_deviation = result.after[0].relative_deviation
-    cash_deviation = result.after[-1].relative_deviation
-    assert asset_deviation is not None
-    assert cash_deviation is not None
-    assert asset_deviation <= Decimal("0.10")
-    assert cash_deviation <= Decimal("0.10")
+    assert result.additional_funds == Decimal(1000)
+    assert result.after[0].relative_deviation == 0
+    assert result.after[-1].relative_deviation == 0
 
 
 def test_minimum_plan_buys_missing_target_with_one_trade() -> None:
@@ -103,6 +99,94 @@ def test_minimum_plan_buys_missing_target_with_one_trade() -> None:
     assert result.trades[0].side == TradeSide.BUY
     assert result.trades[0].instrument == second
     assert result.trades[0].quantity == 100
+
+
+def test_triggered_rebalance_moves_entire_portfolio_to_target() -> None:
+    first = stock("600001")
+    second = stock("600002")
+    third = stock("600003")
+    result = plan(
+        config([(first, "0.5"), (second, "0.3"), (third, "0.2")]),
+        Holdings(
+            cash=Decimal(0),
+            positions=(
+                Position(first, 300),
+                Position(second, 300),
+                Position(third, 400),
+            ),
+        ),
+        quote_map((first, "1"), (second, "1"), (third, "1")),
+    )
+
+    assert result.status == "rebalance_required"
+    assert result.trade_count == 2
+    assert [allocation.quantity for allocation in result.after[:-1]] == [500, 300, 200]
+    assert all(allocation.relative_deviation == 0 for allocation in result.after)
+
+
+def test_target_seeking_handles_real_portfolio_scale() -> None:
+    instruments = {
+        symbol: stock(symbol)
+        for symbol in (
+            "159980",
+            "159985",
+            "511090",
+            "511260",
+            "512050",
+            "513180",
+            "513500",
+            "518880",
+        )
+    }
+    result = plan(
+        config(
+            [
+                (instruments["159980"], "0.10"),
+                (instruments["511260"], "0.15"),
+                (instruments["159985"], "0.05"),
+                (instruments["518880"], "0.10"),
+                (instruments["513500"], "0.10"),
+                (instruments["513180"], "0.05"),
+                (instruments["512050"], "0.20"),
+                (instruments["511090"], "0.25"),
+            ],
+            threshold="0.20",
+            allow_funds=True,
+        ),
+        Holdings(
+            cash=Decimal(0),
+            positions=tuple(
+                Position(instruments[symbol], quantity)
+                for symbol, quantity in {
+                    "513500": 27500,
+                    "159980": 30600,
+                    "159985": 17100,
+                    "511090": 1400,
+                    "511260": 700,
+                    "512050": 104100,
+                    "513180": 51000,
+                    "518880": 5700,
+                }.items()
+            ),
+        ),
+        quote_map(
+            (instruments["159980"], "2.150"),
+            (instruments["159985"], "2.205"),
+            (instruments["511090"], "119.503"),
+            (instruments["511260"], "135.871"),
+            (instruments["512050"], "1.253"),
+            (instruments["513180"], "0.599"),
+            (instruments["513500"], "2.688"),
+            (instruments["518880"], "9.078"),
+        ),
+    )
+
+    assert result.status == "rebalance_required"
+    assert result.trade_count > 1
+    assert max(
+        allocation.relative_deviation or Decimal(0)
+        for allocation in result.after
+    ) < Decimal("0.03")
 
 
 def test_without_funding_sells_before_buying() -> None:
