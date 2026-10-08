@@ -61,24 +61,41 @@ def fetch_quotes(instruments: Iterable[Instrument]) -> dict[Instrument, Quote]:
     for kind, kind_instruments in by_kind.items():
         if not kind_instruments:
             continue
-        frame = _load_frame(kind)
-        normalized = _normalize_frame(frame, kind.value)
+        primary_error = None
+        normalized = None
+        try:
+            frame = _load_frame(kind)
+        except MarketDataError as error:
+            if kind != InstrumentKind.ETF:
+                raise
+            primary_error = error
+        else:
+            normalized = _normalize_frame(frame, kind.value)
+
         fallback = None
-        if kind == InstrumentKind.ETF and any(
-            instrument.symbol not in normalized.index
-            for instrument in kind_instruments
-        ):
-            fallback = _normalize_frame(
-                _load_etf_fallback_frame(),
-                "ETF fallback",
-                prefixed_codes=True,
+        if kind == InstrumentKind.ETF and (
+            normalized is None
+            or any(
+                instrument.symbol not in normalized.index
+                for instrument in kind_instruments
             )
+        ):
+            try:
+                fallback = _normalize_frame(
+                    _load_etf_fallback_frame(),
+                    "ETF fallback",
+                    prefixed_codes=True,
+                )
+            except MarketDataError as error:
+                if primary_error is not None:
+                    raise MarketDataError(f"{primary_error}; {error}") from error
+                raise
 
         for instrument in kind_instruments:
             source = normalized
-            if instrument.symbol not in source.index and fallback is not None:
+            if source is None or instrument.symbol not in source.index:
                 source = fallback
-            if instrument.symbol not in source.index:
+            if source is None or instrument.symbol not in source.index:
                 raise MarketDataError(f"quote not found: {instrument.key}")
             row = source.loc[instrument.symbol]
             try:
