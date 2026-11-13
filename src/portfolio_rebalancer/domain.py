@@ -67,6 +67,7 @@ class Quote:
     price: Decimal
     name: str
     as_of: datetime
+    source: str
 
 
 class TradeSide(StrEnum):
@@ -108,6 +109,7 @@ class RebalancePlan:
     trades: tuple[Trade, ...]
     before: tuple[Allocation, ...]
     after: tuple[Allocation, ...]
+    quotes: tuple[Quote, ...]
 
     @property
     def trade_count(self) -> int:

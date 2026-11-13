@@ -403,6 +403,7 @@ def plan(
         return RebalancePlan(
             status="no_rebalance",
             as_of=as_of,
+            quotes=tuple(quotes[instrument] for instrument in instruments),
             triggered_by=(),
             initial_total=_from_units(initial_total_units),
             final_total=_from_units(initial_total_units),
@@ -462,6 +463,7 @@ def plan(
     return RebalancePlan(
         status="rebalance_required",
         as_of=as_of,
+        quotes=tuple(quotes[instrument] for instrument in instruments),
         triggered_by=tuple(triggered_by),
         initial_total=_from_units(initial_total_units),
         final_total=_from_units(final_total_units),

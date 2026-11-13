@@ -50,6 +50,17 @@ def plan_dict(result: RebalancePlan) -> dict[str, Any]:
     return {
         "status": result.status,
         "as_of": result.as_of.isoformat(),
+        "quotes": {
+            quote.instrument.key: {
+                "symbol": quote.instrument.symbol,
+                "kind": quote.instrument.kind.value,
+                "name": quote.name,
+                "price": _number(quote.price),
+                "source": quote.source,
+                "as_of": quote.as_of.isoformat(),
+            }
+            for quote in result.quotes
+        },
         "triggered_by": list(result.triggered_by),
         "trade_count": result.trade_count,
         "additional_funds": _number(result.additional_funds),
@@ -65,7 +76,8 @@ def plan_dict(result: RebalancePlan) -> dict[str, Any]:
             "allocations": [_allocation_dict(item) for item in result.after],
         },
         "assumptions": [
-            "prices are an AKShare snapshot",
+            "prices are source-timestamped Eastmoney, Tencent, or Sina snapshots",
+            "calendar-aware quote freshness and complete suspension detection are excluded",
             "fees, taxes, slippage, trading limits, and settlement rules are excluded",
             "each security trade is a multiple of 100 units",
         ],

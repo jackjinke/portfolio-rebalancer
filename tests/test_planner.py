@@ -53,6 +53,7 @@ def quote_map(*items: tuple[Instrument, str]) -> dict[Instrument, Quote]:
             price=Decimal(price),
             name=instrument.symbol,
             as_of=NOW,
+            source="fixture",
         )
         for instrument, price in items
     }
